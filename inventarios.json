@@ -1,0 +1,51 @@
+{
+  "115483432988828@lid": {
+    "inventario": {
+      "Camiseta de Boca": 3
+    },
+    "ultimaTirada": "2026-03-21T17:54:58.818Z",
+    "nombre": "IvanTC"
+  },
+  "175505349333142@lid": {
+    "inventario": {
+      "Ryzen 5 5600GT": 1,
+      "Album Panini del 94": 1,
+      "Sanguche de Fiambre": 1
+    },
+    "ultimaTirada": "2026-03-21T17:54:17.634Z",
+    "nombre": "Rafa"
+  },
+  "96495030292721@lid": {
+    "inventario": {
+      "Ryzen 5 5600GT": 1,
+      "Figurita del Momo": 1,
+      "Foto de Hugo": 1
+    },
+    "ultimaTirada": "2026-03-21T18:56:04.094Z",
+    "nombre": "Maau"
+  },
+  "210706800603141@lid": {
+    "inventario": {
+      "Figurita del Momo": 1,
+      "Ryzen 5 5600GT": 1
+    },
+    "ultimaTirada": "2026-03-20T18:30:12.401Z",
+    "nombre": "lean"
+  },
+  "191220668190852@lid": {
+    "inventario": {
+      "Ryzen 5 5600GT": 1,
+      "Foto de Hugo": 1
+    },
+    "ultimaTirada": "2026-03-21T17:57:25.624Z",
+    "nombre": "mauricio"
+  },
+  "57823362834671@lid": {
+    "inventario": {
+      "Corsa 2007": 1,
+      "Camiseta de Boca": 1
+    },
+    "ultimaTirada": "2026-03-21T18:06:07.009Z",
+    "nombre": "M1b2"
+  }
+}

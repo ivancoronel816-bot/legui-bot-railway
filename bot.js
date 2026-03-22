@@ -7,7 +7,7 @@ const fs     = require('fs');
 const path   = require('path');
 
 // ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
-const GROQ_API_KEY = ''; 
+const GROQ_API_KEY = process.env.GROQ_API_KEY; 
 const BOT_NAME     = 'legAI';
 const PERSON       = 'Legay';
 const DB_FILE      = './inventarios.json';

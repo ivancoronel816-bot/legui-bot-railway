@@ -329,7 +329,10 @@ async function main() {
       clientId: 'legai',
       backupSyncIntervalMs: 300000,
     }),
-    puppeteer: { args: ['--no-sandbox', '--disable-setuid-sandbox'] }
+    puppeteer: {
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    }
   });
 
   client.on('qr', qr => {

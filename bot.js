@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { Client, RemoteAuth, MessageMedia } = require('whatsapp-web.js');
 const { MongoStore } = require('wwebjs-mongo');
 const mongoose  = require('mongoose');
@@ -9,7 +10,7 @@ const path      = require('path');
 const http      = require('http');
 
 // ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
-const GROQ_API_KEY = process.GROQ_API_KEY;  // ✅ FIX 1: leer desde .env
+const GROQ_API_KEY = process.env.GROQ_API_KEY;  // ✅ FIX 1: leer desde .env
 const BOT_NAME     = 'legAI';
 const PERSON       = 'Legay';
 
@@ -65,7 +66,7 @@ const ITEMS = [
   { nombre: '★ Karambit Esmeralda Factory New', prob: 0.05,  rareza: '🟡 DORADO',  gif: 'karambit_esmeralda.png'  },
   { nombre: '★ Dragon Lore Factory New',         prob: 0.10,  rareza: '🟡 DORADO',  gif: 'dragon_lore.png'        },
   { nombre: '★ Cuchillos del MOMO Factory New',  prob: 0.30,  rareza: '🔴 ROJO',    gif: 'cuchillos_momo.png'     },
-  { nombre: 'Lambo Enzo',                         prob: 0.50,  rareza: '🔴 ROJO',    gif: 'lambo_enzo.png'         },
+  { nombre: 'Lambo aventador',                         prob: 0.50,  rareza: '🔴 ROJO',    gif: 'lambo_enzo.png'         },
   { nombre: 'Tychon',                             prob: 1.00,  rareza: '🟠 NARANJA', gif: 'tychon.png'             },
   { nombre: 'Magnum de Leon',                     prob: 3.00,  rareza: '🟣 VIOLETA', gif: 'magnum_leon.png'        },
   { nombre: 'Album Panini del 94',                prob: 3.00,  rareza: '🟣 VIOLETA', gif: 'album_panini.png'       },

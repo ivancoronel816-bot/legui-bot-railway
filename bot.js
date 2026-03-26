@@ -8,10 +8,56 @@ const fs     = require('fs');
 const path   = require('path');
 
 // ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
-const GROQ_API_KEY = process.env.GROQ_API_KEY; 
+const GROQ_API_KEY = process.env.GROQ_API_KEY;  // ✅ FIX 1: leer desde .env
 const BOT_NAME     = 'legAI';
 const PERSON       = 'Legay';
-const DB_FILE      = './inventarios.json';
+
+// ─── SCHEMA DE INVENTARIO EN MONGODB ─────────────────────────────────────────
+// ✅ FIX 3: reemplaza inventarios.json (se borraba en cada redeploy en Railway)
+const InventarioSchema = new mongoose.Schema({
+  userId:       { type: String, required: true, unique: true },
+  nombre:       { type: String, default: '' },
+  inventario:   { type: Map, of: Number, default: {} },
+  ultimaTirada: { type: String, default: null },
+});
+const Inventario = mongoose.model('Inventario', InventarioSchema);
+
+async function cargarDB() {
+  const docs = await Inventario.find({});
+  const db = {};
+  for (const doc of docs) {
+    db[doc.userId] = {
+      nombre: doc.nombre,
+      inventario: Object.fromEntries(doc.inventario),
+      ultimaTirada: doc.ultimaTirada,
+    };
+  }
+  return db;
+}
+
+async function guardarUserData(userId, data) {
+  await Inventario.findOneAndUpdate(
+    { userId },
+    {
+      nombre:       data.nombre,
+      inventario:   data.inventario,
+      ultimaTirada: data.ultimaTirada,
+    },
+    { upsert: true, new: true }
+  );
+}
+
+async function getUserDataFromDB(userId) {
+  let doc = await Inventario.findOne({ userId });
+  if (!doc) {
+    doc = await Inventario.create({ userId, inventario: {}, ultimaTirada: null, nombre: '' });
+  }
+  return {
+    nombre:       doc.nombre,
+    inventario:   Object.fromEntries(doc.inventario),
+    ultimaTirada: doc.ultimaTirada,
+  };
+}
 
 // ─── ITEMS DEL GACHA ─────────────────────────────────────────────────────────
 const ITEMS = [
@@ -43,26 +89,11 @@ function tirarGacha() {
   return ITEMS[ITEMS.length - 1];
 }
 
-// ─── BASE DE DATOS LOCAL ──────────────────────────────────────────────────────
-function cargarDB() {
-  if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, '{}');
-  return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-}
-
-function guardarDB(data) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-}
-
-function getUserData(db, userId) {
-  if (!db[userId]) db[userId] = { inventario: {}, ultimaTirada: null, nombre: '' };
-  return db[userId];
-}
-
 function puedeJugar(ultimaTirada) {
   if (!ultimaTirada) return true;
   const ultima = new Date(ultimaTirada);
   const ahora  = new Date();
-  const HORAS  = 12; // cambia este numero
+  const HORAS  = 12;
   return (ahora - ultima) >= HORAS * 60 * 60 * 1000;
 }
 
@@ -96,7 +127,7 @@ function formatearInventario(nombre, inventario) {
 }
 
 // ─── INTERCAMBIOS ────────────────────────────────────────────────────────────
-const intercambios     = {};   // clave: userId del receptor
+const intercambios      = {};
 const MINUTOS_CONFIRMAR = 5;
 
 function buscarItem(inventario, busq) {
@@ -111,8 +142,6 @@ function limpiarVencidos() {
   }
 }
 
-// Busca la clave real del usuario en la DB comparando solo el número,
-// porque el formato del JID puede variar entre mentionedIds y msg.author
 function findUserKey(db, jid) {
   if (db[jid]) return jid;
   const num = jid.replace(/@.*/, '').replace(/\D/g, '');
@@ -293,430 +322,429 @@ async function main() {
 
   const store = new MongoStore({ mongoose });
 
-// ─── CLIENTE WHATSAPP ─────────────────────────────────────────────────────────
-const client = new Client({
-  authStrategy: new RemoteAuth({
-    store,
-    backupSyncIntervalMs: 300000   // guarda la sesión cada 5 minutos
-  }),
-  puppeteer: { args: ['--no-sandbox'] }
-});
+  // ─── CLIENTE WHATSAPP ──────────────────────────────────────────────────────
+  const client = new Client({
+    authStrategy: new RemoteAuth({   // ✅ FIX 2: usar RemoteAuth con el store de Mongo
+      store,
+      clientId: 'legai',
+      backupSyncIntervalMs: 300000,
+    }),
+    puppeteer: { args: ['--no-sandbox', '--disable-setuid-sandbox'] }
+  });
 
-client.on('qr', qr => {
-  console.log('\n📱 Escaneá este QR:\n');
-  qrcode.generate(qr, { small: true });
-});
+  client.on('qr', qr => {
+    console.log('\n📱 Escaneá este QR:\n');
+    qrcode.generate(qr, { small: true });
+  });
 
-client.on('ready', async () => {
-  console.log(`\n✅ Bot listo. @${BOT_NAME} activo.\n`);
+  client.on('remote_session_saved', () => {
+    console.log('✅ Sesión guardada en MongoDB');
+  });
 
-  // ── Chequeo automático de cumpleaños al arrancar ──────────────────────
-  const CUMPLES_AUTO = [
-    { nombre: 'Legui',  dia: 27, mes: 2  },
-    { nombre: 'Bonora', dia: 11, mes: 5  },
-    { nombre: 'Ivan',   dia: 17, mes: 5  },
-    { nombre: 'Martin', dia: 5,  mes: 11 },
-    { nombre: 'Negro',  dia: 20, mes: 11 },
-    { nombre: 'Rafa',   dia: 6,  mes: 12 },
-  ];
-  const ahora  = new Date();
-  const hoyDia = ahora.getDate();
-  const hoyMes = ahora.getMonth() + 1;
-  const hoy    = CUMPLES_AUTO.filter(c => c.dia === hoyDia && c.mes === hoyMes);
-  if (hoy.length > 0) {
-    await new Promise(r => setTimeout(r, 5000));
-    const chats  = await client.getChats();
-    const grupos = chats.filter(c => c.isGroup);
-    const feliz  = hoy.map(c => '🎉 ' + c.nombre).join('\n');
-    for (const g of grupos) {
-      await g.sendMessage('🎂 *¡Feliz cumpleaños!*\n─────────────────\n' + feliz + '\n─────────────────\nno te olvides de saludar ura');
+  client.on('ready', async () => {
+    console.log(`\n✅ Bot listo. @${BOT_NAME} activo.\n`);
+
+    // ── Chequeo automático de cumpleaños al arrancar ──────────────────────
+    const CUMPLES_AUTO = [
+      { nombre: 'Legui',  dia: 27, mes: 2  },
+      { nombre: 'Bonora', dia: 11, mes: 5  },
+      { nombre: 'Ivan',   dia: 17, mes: 5  },
+      { nombre: 'Martin', dia: 5,  mes: 11 },
+      { nombre: 'Negro',  dia: 20, mes: 11 },
+      { nombre: 'Rafa',   dia: 6,  mes: 12 },
+    ];
+    const ahora  = new Date();
+    const hoyDia = ahora.getDate();
+    const hoyMes = ahora.getMonth() + 1;
+    const hoy    = CUMPLES_AUTO.filter(c => c.dia === hoyDia && c.mes === hoyMes);
+    if (hoy.length > 0) {
+      await new Promise(r => setTimeout(r, 5000));
+      const chats  = await client.getChats();
+      const grupos = chats.filter(c => c.isGroup);
+      const feliz  = hoy.map(c => '🎉 ' + c.nombre).join('\n');
+      for (const g of grupos) {
+        await g.sendMessage('🎂 *¡Feliz cumpleaños!*\n─────────────────\n' + feliz + '\n─────────────────\nno te olvides de saludar ura');
+      }
     }
-  }
-});
+  });
 
-client.on('message', async msg => {
-  if (!msg.from.endsWith('@g.us')) return;
-  if (msg.fromMe) return;
+  client.on('message', async msg => {
+    if (!msg.from.endsWith('@g.us')) return;
+    if (msg.fromMe) return;
 
-  const body = msg.body || '';
+    const body = msg.body || '';
 
-  // ── Detectar mención ─────────────────────────────────────────────────────
-  const mentionedIds    = msg.mentionedIds || [];
-  const botNumber       = client.info?.wid?.user;
-  const mentionedByJid  = botNumber && mentionedIds.some(id => id.includes(botNumber));
-  const mentionedByName = body.toLowerCase().includes(`@${BOT_NAME.toLowerCase()}`);
-  if (!mentionedByJid && !mentionedByName) return;
+    // ── Detectar mención ─────────────────────────────────────────────────────
+    const mentionedIds    = msg.mentionedIds || [];
+    const botNumber       = client.info?.wid?.user;
+    const mentionedByJid  = botNumber && mentionedIds.some(id => id.includes(botNumber));
+    const mentionedByName = body.toLowerCase().includes(`@${BOT_NAME.toLowerCase()}`);
+    if (!mentionedByJid && !mentionedByName) return;
 
-  // ── Antiflood 5 segundos ─────────────────────────────────────────────────
-  const userId = msg.author || msg.from;
-  const now    = Date.now();
-  if (lastReply[userId] && now - lastReply[userId] < 5000) return;
-  lastReply[userId] = now;
+    // ── Antiflood 5 segundos ─────────────────────────────────────────────────
+    const userId = msg.author || msg.from;
+    const now    = Date.now();
+    if (lastReply[userId] && now - lastReply[userId] < 5000) return;
+    lastReply[userId] = now;
 
-  // ── Limpiar texto ────────────────────────────────────────────────────────
-  const cleanText = body
-    .replace(new RegExp(`@${BOT_NAME}`, 'gi'), '')
-    .replace(/@\d+/g, '')
-    .trim()
-    .toLowerCase();
+    // ── Limpiar texto ────────────────────────────────────────────────────────
+    const cleanText = body
+      .replace(new RegExp(`@${BOT_NAME}`, 'gi'), '')
+      .replace(/@\d+/g, '')
+      .trim()
+      .toLowerCase();
 
-  const chat    = await msg.getChat();
-  const waChat  = chat;
-  const cleanLow = cleanText;                        // ya es lowercase
-  const clean    = body                              // preserva mayúsculas (para nombres de items)
-    .replace(new RegExp(`@${BOT_NAME}`, 'gi'), '')
-    .replace(/@\d+/g, '')
-    .trim();
+    const chat    = await msg.getChat();
+    const waChat  = chat;
+    const cleanLow = cleanText;
+    const clean    = body
+      .replace(new RegExp(`@${BOT_NAME}`, 'gi'), '')
+      .replace(/@\d+/g, '')
+      .trim();
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // !gacha
-  // ══════════════════════════════════════════════════════════════════════════
-  if (cleanText === '!gacha') {
-    const db       = cargarDB();
-    const contact  = await msg.getContact();
-    const nombre   = contact.pushname || contact.name || 'ura';
-    const userData = getUserData(db, userId);
-    userData.nombre = nombre;
+    // ══════════════════════════════════════════════════════════════════════════
+    // !gacha
+    // ══════════════════════════════════════════════════════════════════════════
+    if (cleanText === '!gacha') {
+      const contact  = await msg.getContact();
+      const nombre   = contact.pushname || contact.name || 'ura';
+      const userData = await getUserDataFromDB(userId);
+      userData.nombre = nombre;
 
-    if (!puedeJugar(userData.ultimaTirada)) {
-      const resta = tiempoRestante(userData.ultimaTirada);
-      await msg.reply(`ya tiraste hoy ${nombre}\nvolvé en ${resta} 💀`);
-      return;
-    }
+      if (!puedeJugar(userData.ultimaTirada)) {
+        const resta = tiempoRestante(userData.ultimaTirada);
+        await msg.reply(`ya tiraste hoy ${nombre}\nvolvé en ${resta} 💀`);
+        return;
+      }
 
-    const item   = tirarGacha();
-    const esNada = item.nombre === 'Nada';
+      const item   = tirarGacha();
+      const esNada = item.nombre === 'Nada';
 
-    if (!esNada) {
-      userData.inventario[item.nombre] = (userData.inventario[item.nombre] || 0) + 1;
-    }
-    userData.ultimaTirada = new Date().toISOString();
-    guardarDB(db);
+      if (!esNada) {
+        userData.inventario[item.nombre] = (userData.inventario[item.nombre] || 0) + 1;
+      }
+      userData.ultimaTirada = new Date().toISOString();
+      await guardarUserData(userId, userData);
 
-    const caption = esNada
-      ? `💀 *NADA*\nmala suerte ${nombre}`
-      : `${item.rareza}\n*${item.nombre}*\n(${item.prob}% de prob)`;
+      const caption = esNada
+        ? `💀 *NADA*\nmala suerte ${nombre}`
+        : `${item.rareza}\n*${item.nombre}*\n(${item.prob}% de prob)`;
 
-    chat.sendStateTyping();
-    await new Promise(r => setTimeout(r, 1200));
-    chat.clearState();
+      chat.sendStateTyping();
+      await new Promise(r => setTimeout(r, 1200));
+      chat.clearState();
 
-    // Mandar GIF o solo texto
-    if (item.gif) {
-      const gifPath = path.join('./gifs', item.gif);
-      if (fs.existsSync(gifPath)) {
-        const media = MessageMedia.fromFilePath(gifPath);
-        await chat.sendMessage(media, { caption });
+      if (item.gif) {
+        const gifPath = path.join('./gifs', item.gif);
+        if (fs.existsSync(gifPath)) {
+          const media = MessageMedia.fromFilePath(gifPath);
+          await chat.sendMessage(media, { caption });
+        } else {
+          await msg.reply(caption);
+          console.warn(`⚠️  GIF faltante: ${gifPath}`);
+        }
       } else {
         await msg.reply(caption);
-        console.warn(`⚠️  GIF faltante: ${gifPath}`);
       }
-    } else {
-      await msg.reply(caption);
+
+      try {
+        const comentario = await comentarGacha(item.nombre, esNada);
+        if (comentario) {
+          await new Promise(r => setTimeout(r, 700));
+          await chat.sendMessage(comentario);
+        }
+      } catch (e) { console.error('comentarGacha:', e.message); }
+
+      return;
     }
 
-    // Comentario de Legay
-    try {
-      const comentario = await comentarGacha(item.nombre, esNada);
-      if (comentario) {
-        await new Promise(r => setTimeout(r, 700));
-        await chat.sendMessage(comentario);
+    // ══════════════════════════════════════════════════════════════════════════
+    // !inventario
+    // ══════════════════════════════════════════════════════════════════════════
+    if (cleanText === '!inventario') {
+      const contact  = await msg.getContact();
+      const nombre   = contact.pushname || contact.name || 'ura';
+      const userData = await getUserDataFromDB(userId);
+      userData.nombre = nombre;
+      await guardarUserData(userId, userData);
+      await msg.reply(formatearInventario(nombre, userData.inventario));
+      return;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // !reset — borra historial de conversación (no inventario)
+    // ══════════════════════════════════════════════════════════════════════════
+    if (cleanText === '!reset') {
+      histories[msg.from] = [];
+      await msg.reply('q');
+      return;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // !cumpleaños
+    // ══════════════════════════════════════════════════════════════════════════
+    const CUMPLES = [
+      { nombre: 'Legui',  dia: 27, mes: 2  },
+      { nombre: 'Bonora', dia: 11, mes: 5  },
+      { nombre: 'Ivan',   dia: 17, mes: 5  },
+      { nombre: 'Martin', dia: 5,  mes: 11 },
+      { nombre: 'Negro',  dia: 20, mes: 11 },
+      { nombre: 'Rafa',   dia: 6,  mes: 12 },
+    ];
+
+    if (cleanText === '!cumpleaños' || cleanText === '!cumpleanos') {
+      const ahora   = new Date();
+      const hoyDia  = ahora.getDate();
+      const hoyMes  = ahora.getMonth() + 1;
+
+      function diasHasta(dia, mes) {
+        const hoyDate = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());
+        let target    = new Date(ahora.getFullYear(), mes - 1, dia);
+        if (target < hoyDate) target.setFullYear(hoyDate.getFullYear() + 1);
+        return Math.round((target - hoyDate) / 86400000);
       }
-    } catch (e) { console.error('comentarGacha:', e.message); }
 
-    return;
-  }
+      const conDias = CUMPLES.map(c => {
+        return { ...c, diasRestantes: diasHasta(c.dia, c.mes) };
+      }).sort((a, b) => a.diasRestantes - b.diasRestantes);
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // !inventario
-  // ══════════════════════════════════════════════════════════════════════════
-  if (cleanText === '!inventario') {
-    const db       = cargarDB();
-    const contact  = await msg.getContact();
-    const nombre   = contact.pushname || contact.name || 'ura';
-    const userData = getUserData(db, userId);
-    userData.nombre = nombre;
-    guardarDB(db);
-    await msg.reply(formatearInventario(nombre, userData.inventario));
-    return;
-  }
+      const hoy    = conDias.filter(c => c.diasRestantes === 0);
+      const proxim = conDias.filter(c => c.diasRestantes > 0).slice(0, 3);
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // !reset — borra historial de conversación (no inventario)
-  // ══════════════════════════════════════════════════════════════════════════
-  if (cleanText === '!reset') {
-    histories[msg.from] = [];
-    await msg.reply('q');
-    return;
-  }
+      const MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // !cumpleaños
-  // ══════════════════════════════════════════════════════════════════════════
-  const CUMPLES = [
-    { nombre: 'Legui',  dia: 27, mes: 2  },
-    { nombre: 'Bonora', dia: 11, mes: 5  },
-    { nombre: 'Ivan',   dia: 17, mes: 5  },
-    { nombre: 'Martin', dia: 5,  mes: 11 },
-    { nombre: 'Negro',  dia: 20, mes: 11 },
-    { nombre: 'Rafa',   dia: 6,  mes: 12 },
-  ];
+      let texto = `🎂 *Cumpleaños del grupo*\n─────────────────\n`;
 
-  if (cleanText === '!cumpleaños' || cleanText === '!cumpleanos') {
-    const ahora   = new Date();
-    const hoyDia  = ahora.getDate();
-    const hoyMes  = ahora.getMonth() + 1;
-    const hoyNum  = hoyMes * 100 + hoyDia;          // número comparable
+      if (hoy.length > 0) {
+        texto += `🥳 *HOY cumplen:*\n`;
+        for (const c of hoy) texto += `  🎉 ${c.nombre}\n`;
+        texto += `─────────────────\n`;
+      }
 
-    // Calcular dias reales hasta cada cumple
-    function diasHasta(dia, mes) {
-      const hoyDate = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());
-      let target    = new Date(ahora.getFullYear(), mes - 1, dia);
-      if (target < hoyDate) target.setFullYear(hoyDate.getFullYear() + 1);
-      return Math.round((target - hoyDate) / 86400000);
-    }
+      texto += `📅 *Próximos:*\n`;
+      for (const c of proxim) {
+        const en = c.diasRestantes === 1 ? 'mañana' : `en ${c.diasRestantes} días`;
+        texto += `  ${c.nombre} — ${c.dia} de ${MESES[c.mes]} (${en})\n`;
+      }
 
-    // Ordenar por dias reales restantes
-    const conDias = CUMPLES.map(c => {
-      return { ...c, diasRestantes: diasHasta(c.dia, c.mes) };
-    }).sort((a, b) => a.diasRestantes - b.diasRestantes);
+      texto += `─────────────────\n📋 *Todos:*\n`;
+      for (const c of conDias) {
+        const esHoy = c.diasRestantes === 0;
+        const dias  = esHoy ? '¡hoy!' : c.diasRestantes === 1 ? 'mañana' : `${c.diasRestantes} días`;
+        texto += `  ${esHoy ? '🎉' : '▸'} ${c.nombre} — ${c.dia} de ${MESES[c.mes]} · ${dias}\n`;
+      }
 
-    const hoy    = conDias.filter(c => c.diasRestantes === 0);
-    const proxim = conDias.filter(c => c.diasRestantes > 0).slice(0, 3);
-
-    const MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-                   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-
-    let texto = `🎂 *Cumpleaños del grupo*\n─────────────────\n`;
-
-    if (hoy.length > 0) {
-      texto += `🥳 *HOY cumplen:*\n`;
-      for (const c of hoy) texto += `  🎉 ${c.nombre}\n`;
-      texto += `─────────────────\n`;
-    }
-
-    texto += `📅 *Próximos:*\n`;
-    for (const c of proxim) {
-      const en = c.diasRestantes === 1 ? 'mañana' : `en ${c.diasRestantes} días`;
-      texto += `  ${c.nombre} — ${c.dia} de ${MESES[c.mes]} (${en})\n`;
-    }
-
-    texto += `─────────────────\n📋 *Todos:*\n`;
-    for (const c of conDias) {
-      const esHoy = c.diasRestantes === 0;
-      const dias  = esHoy ? '¡hoy!' : c.diasRestantes === 1 ? 'mañana' : `${c.diasRestantes} días`;
-      texto += `  ${esHoy ? '🎉' : '▸'} ${c.nombre} — ${c.dia} de ${MESES[c.mes]} · ${dias}\n`;
-    }
-
-    await msg.reply(texto.trim());
-    return;
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // !ayuda
-  // ══════════════════════════════════════════════════════════════════════════
-  if (cleanText === '!ayuda' || cleanText === '!help') {
-    await msg.reply(
-      `🎰 *Comandos de @${BOT_NAME}*\n` +
-      `─────────────────\n` +
-      `!gacha → tirar (1 vez por día)\n` +
-      `!inventario → ver tus items\n` +
-      `!cumpleaños → ver cumples del grupo\n` +
-      `!reset → reiniciar conversación\n` +
-      `─────────────────\n` +
-      `*Intercambios*\n` +
-      `!intercambiar @usuario MiItem por SuItem\n` +
-      `!aceptar → aceptar propuesta recibida\n` +
-      `!rechazar → rechazar propuesta recibida\n` +
-      `!cancelar → cancelar tu propia propuesta\n` +
-      `─────────────────\n` +
-      `También podés hablarme normal mencionándome`
-    );
-    return;
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // !intercambiar
-  // ══════════════════════════════════════════════════════════════════════════
-  if (cleanLow.startsWith('!intercambiar')) {
-    limpiarVencidos();
-
-    const destino = mentionedIds.find(id => !id.includes(botNumber));
-    if (!destino) {
-      await msg.reply('tenes q mencionar a alguien\nuso: !intercambiar @usuario MiItem por SuItem');
+      await msg.reply(texto.trim());
       return;
     }
 
-    // Extraer items del texto limpio con case original
-    // Eliminar "!intercambiar @mención " del inicio
-    const sinComando = clean.replace(/^!intercambiar\s+/i, '').replace(/@\S+\s*/g, '').trim();
-    const sep = sinComando.toLowerCase().indexOf(' por ');
-    if (sep === -1) {
-      await msg.reply('formato incorrecto\nuso: !intercambiar @usuario MiItem por SuItem');
+    // ══════════════════════════════════════════════════════════════════════════
+    // !ayuda
+    // ══════════════════════════════════════════════════════════════════════════
+    if (cleanText === '!ayuda' || cleanText === '!help') {
+      await msg.reply(
+        `🎰 *Comandos de @${BOT_NAME}*\n` +
+        `─────────────────\n` +
+        `!gacha → tirar (1 vez por día)\n` +
+        `!inventario → ver tus items\n` +
+        `!cumpleaños → ver cumples del grupo\n` +
+        `!reset → reiniciar conversación\n` +
+        `─────────────────\n` +
+        `*Intercambios*\n` +
+        `!intercambiar @usuario MiItem por SuItem\n` +
+        `!aceptar → aceptar propuesta recibida\n` +
+        `!rechazar → rechazar propuesta recibida\n` +
+        `!cancelar → cancelar tu propia propuesta\n` +
+        `─────────────────\n` +
+        `También podés hablarme normal mencionándome`
+      );
       return;
     }
 
-    const miItemBusq = sinComando.substring(0, sep).trim();
-    const suItemBusq = sinComando.substring(sep + 5).trim();
+    // ══════════════════════════════════════════════════════════════════════════
+    // !intercambiar
+    // ══════════════════════════════════════════════════════════════════════════
+    if (cleanLow.startsWith('!intercambiar')) {
+      limpiarVencidos();
 
-    if (!miItemBusq || !suItemBusq) {
-      await msg.reply('formato incorrecto\nuso: !intercambiar @usuario MiItem por SuItem');
-      return;
-    }
+      const destino = mentionedIds.find(id => !id.includes(botNumber));
+      if (!destino) {
+        await msg.reply('tenes q mencionar a alguien\nuso: !intercambiar @usuario MiItem por SuItem');
+        return;
+      }
 
-    const db      = cargarDB();
-    const ctDe    = await msg.getContact();
-    const nomDe   = ctDe.pushname || ctDe.name || 'ura';
-    const udDe    = getUserData(db, userId);
-    udDe.nombre   = nomDe;
+      const sinComando = clean.replace(/^!intercambiar\s+/i, '').replace(/@\S+\s*/g, '').trim();
+      const sep = sinComando.toLowerCase().indexOf(' por ');
+      if (sep === -1) {
+        await msg.reply('formato incorrecto\nuso: !intercambiar @usuario MiItem por SuItem');
+        return;
+      }
 
-    const rawPara = destino.includes('@c.us') ? destino : destino + '@c.us';
-    const idPara  = findUserKey(db, rawPara);   // clave real en la DB
-    const udPara  = getUserData(db, idPara);
+      const miItemBusq = sinComando.substring(0, sep).trim();
+      const suItemBusq = sinComando.substring(sep + 5).trim();
 
-    const miItemReal = buscarItem(udDe.inventario, miItemBusq);
-    if (!miItemReal || udDe.inventario[miItemReal] < 1) {
-      await msg.reply(`no tenes "${miItemBusq}" en tu inventario`);
-      return;
-    }
+      if (!miItemBusq || !suItemBusq) {
+        await msg.reply('formato incorrecto\nuso: !intercambiar @usuario MiItem por SuItem');
+        return;
+      }
 
-    const suItemReal = buscarItem(udPara.inventario, suItemBusq);
-    if (!suItemReal || udPara.inventario[suItemReal] < 1) {
-      await msg.reply(`${udPara.nombre || 'el otro'} no tiene "${suItemBusq}" en su inventario`);
-      return;
-    }
+      const ctDe  = await msg.getContact();
+      const nomDe = ctDe.pushname || ctDe.name || 'ura';
+      const udDe  = await getUserDataFromDB(userId);
+      udDe.nombre = nomDe;
 
-    if (intercambios[idPara] && intercambios[idPara].de === userId) {
-      await msg.reply('ya tenes una propuesta pendiente, espera o usa !cancelar');
-      return;
-    }
+      const rawPara = destino.includes('@c.us') ? destino : destino + '@c.us';
+      const db      = await cargarDB();
+      const idPara  = findUserKey(db, rawPara);
+      const udPara  = await getUserDataFromDB(idPara);
 
-    intercambios[idPara] = {
-      de: userId, nomDe, para: idPara,
-      miItem: miItemReal, suItem: suItemReal,
-      chatId: msg.from, expira: Date.now() + MINUTOS_CONFIRMAR * 60000
-    };
-    guardarDB(db);
+      const miItemReal = buscarItem(udDe.inventario, miItemBusq);
+      if (!miItemReal || udDe.inventario[miItemReal] < 1) {
+        await msg.reply(`no tenes "${miItemBusq}" en tu inventario`);
+        return;
+      }
 
-    await waChat.sendMessage(
-      `*Propuesta de intercambio* 🔄\n` +
-      `─────────────────\n` +
-      `${nomDe} ofrece: *${miItemReal}*\n` +
-      `a cambio de: *${suItemReal}*\n` +
-      `─────────────────\n` +
-      `Tenés ${MINUTOS_CONFIRMAR} minutos para responder\n` +
-      `@${BOT_NAME} !aceptar  o  @${BOT_NAME} !rechazar`,
-      { mentions: [idPara] }
-    );
+      const suItemReal = buscarItem(udPara.inventario, suItemBusq);
+      if (!suItemReal || udPara.inventario[suItemReal] < 1) {
+        await msg.reply(`${udPara.nombre || 'el otro'} no tiene "${suItemBusq}" en su inventario`);
+        return;
+      }
 
-    setTimeout(() => {
       if (intercambios[idPara] && intercambios[idPara].de === userId) {
-        delete intercambios[idPara];
-        waChat.sendMessage(`La propuesta de ${nomDe} vencio ⌛`);
+        await msg.reply('ya tenes una propuesta pendiente, espera o usa !cancelar');
+        return;
       }
-    }, MINUTOS_CONFIRMAR * 60000);
 
-    return;
-  }
+      intercambios[idPara] = {
+        de: userId, nomDe, para: idPara,
+        miItem: miItemReal, suItem: suItemReal,
+        chatId: msg.from, expira: Date.now() + MINUTOS_CONFIRMAR * 60000
+      };
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // !aceptar
-  // ══════════════════════════════════════════════════════════════════════════
-  if (cleanLow === '!aceptar') {
-    limpiarVencidos();
-    const prop = intercambios[userId];
-    if (!prop) { await msg.reply('no tenes ninguna propuesta pendiente'); return; }
+      await waChat.sendMessage(
+        `*Propuesta de intercambio* 🔄\n` +
+        `─────────────────\n` +
+        `${nomDe} ofrece: *${miItemReal}*\n` +
+        `a cambio de: *${suItemReal}*\n` +
+        `─────────────────\n` +
+        `Tenés ${MINUTOS_CONFIRMAR} minutos para responder\n` +
+        `@${BOT_NAME} !aceptar  o  @${BOT_NAME} !rechazar`,
+        { mentions: [idPara] }
+      );
 
-    const db     = cargarDB();
-    const udDe   = getUserData(db, findUserKey(db, prop.de));
-    const udPara = getUserData(db, findUserKey(db, prop.para));
+      setTimeout(() => {
+        if (intercambios[idPara] && intercambios[idPara].de === userId) {
+          delete intercambios[idPara];
+          waChat.sendMessage(`La propuesta de ${nomDe} vencio ⌛`);
+        }
+      }, MINUTOS_CONFIRMAR * 60000);
 
-    const miR = buscarItem(udDe.inventario, prop.miItem);
-    const suR = buscarItem(udPara.inventario, prop.suItem);
-
-    if (!miR || udDe.inventario[miR] < 1) {
-      await msg.reply(`${prop.nomDe} ya no tiene ese item, intercambio cancelado`);
-      delete intercambios[userId]; return;
+      return;
     }
-    if (!suR || udPara.inventario[suR] < 1) {
-      await msg.reply('ya no tenes ese item, intercambio cancelado');
-      delete intercambios[userId]; return;
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // !aceptar
+    // ══════════════════════════════════════════════════════════════════════════
+    if (cleanLow === '!aceptar') {
+      limpiarVencidos();
+      const prop = intercambios[userId];
+      if (!prop) { await msg.reply('no tenes ninguna propuesta pendiente'); return; }
+
+      const udDe   = await getUserDataFromDB(prop.de);
+      const udPara = await getUserDataFromDB(prop.para);
+
+      const miR = buscarItem(udDe.inventario, prop.miItem);
+      const suR = buscarItem(udPara.inventario, prop.suItem);
+
+      if (!miR || udDe.inventario[miR] < 1) {
+        await msg.reply(`${prop.nomDe} ya no tiene ese item, intercambio cancelado`);
+        delete intercambios[userId]; return;
+      }
+      if (!suR || udPara.inventario[suR] < 1) {
+        await msg.reply('ya no tenes ese item, intercambio cancelado');
+        delete intercambios[userId]; return;
+      }
+
+      udDe.inventario[miR]--;
+      if (udDe.inventario[miR] <= 0) delete udDe.inventario[miR];
+      udPara.inventario[suR]--;
+      if (udPara.inventario[suR] <= 0) delete udPara.inventario[suR];
+
+      udPara.inventario[miR] = (udPara.inventario[miR] || 0) + 1;
+      udDe.inventario[suR]   = (udDe.inventario[suR]   || 0) + 1;
+
+      await guardarUserData(prop.de, udDe);
+      await guardarUserData(prop.para, udPara);
+      delete intercambios[userId];
+
+      const ctPara  = await msg.getContact();
+      const nomPara = ctPara.pushname || ctPara.name || 'ura';
+      await waChat.sendMessage(
+        `✅ *Intercambio completado*\n` +
+        `─────────────────\n` +
+        `${prop.nomDe} recibió: *${suR}*\n` +
+        `${nomPara} recibió: *${miR}*`
+      );
+      return;
     }
 
-    // Transferir items
-    udDe.inventario[miR]--;
-    if (udDe.inventario[miR] <= 0) delete udDe.inventario[miR];
-    udPara.inventario[suR]--;
-    if (udPara.inventario[suR] <= 0) delete udPara.inventario[suR];
+    // ══════════════════════════════════════════════════════════════════════════
+    // !rechazar
+    // ══════════════════════════════════════════════════════════════════════════
+    if (cleanLow === '!rechazar') {
+      limpiarVencidos();
+      if (!intercambios[userId]) { await msg.reply('no tenes ninguna propuesta pendiente'); return; }
+      const prop = intercambios[userId];
+      delete intercambios[userId];
+      const ct = await msg.getContact();
+      await waChat.sendMessage(`❌ ${ct.pushname || ct.name || 'ura'} rechazó el intercambio de ${prop.nomDe}`);
+      return;
+    }
 
-    udPara.inventario[miR] = (udPara.inventario[miR] || 0) + 1;
-    udDe.inventario[suR]   = (udDe.inventario[suR]   || 0) + 1;
+    // ══════════════════════════════════════════════════════════════════════════
+    // !cancelar
+    // ══════════════════════════════════════════════════════════════════════════
+    if (cleanLow === '!cancelar') {
+      limpiarVencidos();
+      const key = Object.keys(intercambios).find(k => intercambios[k].de === userId);
+      if (!key) { await msg.reply('no tenes ninguna propuesta activa'); return; }
+      delete intercambios[key];
+      await msg.reply('propuesta cancelada ❌');
+      return;
+    }
 
-    guardarDB(db);
-    delete intercambios[userId];
+    // ══════════════════════════════════════════════════════════════════════════
+    // CONVERSACIÓN NORMAL
+    // ══════════════════════════════════════════════════════════════════════════
+    const textoParaIA = body
+      .replace(new RegExp(`@${BOT_NAME}`, 'gi'), '')
+      .replace(/@\d+/g, '')
+      .trim();
 
-    const ctPara  = await msg.getContact();
-    const nomPara = ctPara.pushname || ctPara.name || 'ura';
-    await waChat.sendMessage(
-      `✅ *Intercambio completado*\n` +
-      `─────────────────\n` +
-      `${prop.nomDe} recibió: *${suR}*\n` +
-      `${nomPara} recibió: *${miR}*`
-    );
-    return;
-  }
+    if (!textoParaIA) return;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // !rechazar
-  // ══════════════════════════════════════════════════════════════════════════
-  if (cleanLow === '!rechazar') {
-    limpiarVencidos();
-    if (!intercambios[userId]) { await msg.reply('no tenes ninguna propuesta pendiente'); return; }
-    const prop = intercambios[userId];
-    delete intercambios[userId];
-    const ct = await msg.getContact();
-    await waChat.sendMessage(`❌ ${ct.pushname || ct.name || 'ura'} rechazó el intercambio de ${prop.nomDe}`);
-    return;
-  }
+    console.log(`[${msg.from}] ${userId}: ${body}`);
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // !cancelar
-  // ══════════════════════════════════════════════════════════════════════════
-  if (cleanLow === '!cancelar') {
-    limpiarVencidos();
-    const key = Object.keys(intercambios).find(k => intercambios[k].de === userId);
-    if (!key) { await msg.reply('no tenes ninguna propuesta activa'); return; }
-    delete intercambios[key];
-    await msg.reply('propuesta cancelada ❌');
-    return;
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // CONVERSACIÓN NORMAL
-  // ══════════════════════════════════════════════════════════════════════════
-  const textoParaIA = body
-    .replace(new RegExp(`@${BOT_NAME}`, 'gi'), '')
-    .replace(/@\d+/g, '')
-    .trim();
-
-  if (!textoParaIA) return;
-
-  console.log(`[${msg.from}] ${userId}: ${body}`);
-
-  try {
-    chat.sendStateTyping();
-    const delay = Math.min(1000 + textoParaIA.length * 12 + Math.random() * 1500, 4000);
-    await new Promise(r => setTimeout(r, delay));
-    const reply = await callGroq(msg.from, textoParaIA);
-    chat.clearState();
-    await msg.reply(reply);
-    console.log(`→ ${reply}`);
-  } catch (e) {
-    console.error('callGroq:', e.message);
-  }
-});
+    try {
+      chat.sendStateTyping();
+      const delay = Math.min(1000 + textoParaIA.length * 12 + Math.random() * 1500, 4000);
+      await new Promise(r => setTimeout(r, delay));
+      const reply = await callGroq(msg.from, textoParaIA);
+      chat.clearState();
+      await msg.reply(reply);
+      console.log(`→ ${reply}`);
+    } catch (e) {
+      console.error('callGroq:', e.message);
+    }
+  });
 
   client.initialize();
-} // fin main()
+}
+
+// ─── MANEJO DE ERRORES GLOBALES (importante para Railway) ────────────────────
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ unhandledRejection:', reason);
+});
 
 main().catch(console.error);

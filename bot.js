@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { Client, RemoteAuth, MessageMedia } = require('whatsapp-web.js');
 const { MongoStore } = require('wwebjs-mongo');
 const mongoose = require('mongoose');
@@ -7,7 +8,7 @@ const fs     = require('fs');
 const path   = require('path');
 
 // ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
-const GROQ_API_KEY = process.GROQ_API_KEY;  // ✅ FIX 1: leer desde .env
+const GROQ_API_KEY = process.env.GROQ_API_KEY;  // ✅ FIX 1: leer desde .env
 const BOT_NAME     = 'legAI';
 const PERSON       = 'Legay';
 

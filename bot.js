@@ -1,13 +1,16 @@
+require('dotenv').config();
 const { Client, RemoteAuth, MessageMedia } = require('whatsapp-web.js');
 const { MongoStore } = require('wwebjs-mongo');
-const mongoose = require('mongoose');
-const qrcode = require('qrcode-terminal');
-const fetch  = require('node-fetch');
-const fs     = require('fs');
-const path   = require('path');
+const mongoose  = require('mongoose');
+const qrcode    = require('qrcode-terminal');
+const qrcodeImg = require('qrcode');
+const fetch     = require('node-fetch');
+const fs        = require('fs');
+const path      = require('path');
+const http      = require('http');
 
 // ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
-const GROQ_API_KEY = process.GROQ_API_KEY;  // ✅ FIX 1: leer desde .env
+const GROQ_API_KEY = process.env.GROQ_API_KEY;  // ✅ FIX 1: leer desde .env
 const BOT_NAME     = 'legAI';
 const PERSON       = 'Legay';
 
@@ -334,16 +337,48 @@ async function main() {
     }
   });
 
+  // ─── SERVIDOR WEB PARA VER EL QR ─────────────────────────────────────────
+  let currentQR = null;
+  const PORT = process.env.PORT || 3000;
+
+  const server = http.createServer(async (req, res) => {
+    if (!currentQR) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<h2 style="font-family:sans-serif;text-align:center;margin-top:40vh">Sesion activa o QR no generado aun, recarga en unos segundos</h2>');
+      return;
+    }
+    try {
+      const imgData = await qrcodeImg.toDataURL(currentQR, { width: 400, margin: 2 });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="18">
+<title>legAI QR</title>
+<style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;font-family:sans-serif;background:#111;color:#fff;}img{border:8px solid #fff;border-radius:8px;}p{opacity:.5;font-size:13px;}</style>
+</head><body>
+<h2>Escaneá con WhatsApp</h2>
+<img src="${imgData}"/>
+<p>Se recarga automaticamente cada 18 segundos</p>
+</body></html>`);
+    } catch (e) {
+      res.writeHead(500);
+      res.end('Error generando QR: ' + e.message);
+    }
+  });
+
+  server.listen(PORT, () => console.log(`✅ Servidor QR escuchando en puerto ${PORT}`));
+
   client.on('qr', qr => {
-    console.log('\n📱 Escaneá este QR:\n');
+    currentQR = qr;
+    console.log('\n📱 QR listo — abrí la URL publica de Railway para escanearlo\n');
     qrcode.generate(qr, { small: true });
   });
 
   client.on('remote_session_saved', () => {
-    console.log('✅ Sesión guardada en MongoDB');
+    console.log('✅ Sesion guardada en MongoDB');
   });
 
   client.on('ready', async () => {
+    currentQR = null;
     console.log(`\n✅ Bot listo. @${BOT_NAME} activo.\n`);
 
     // ── Chequeo automático de cumpleaños al arrancar ──────────────────────

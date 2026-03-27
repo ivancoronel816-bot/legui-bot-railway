@@ -311,7 +311,7 @@ async function necesitaBuscar(userMessage) {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
-        max_tokens: 140,
+        max_tokens: 30,
         temperature: 0.0,
         messages: [
           {
@@ -402,6 +402,11 @@ async function comentarGacha(itemNombre, esNada) {
 // ─── ANTIFLOOD ────────────────────────────────────────────────────────────────
 const lastReply = {};
 
+
+// ─── CORREGIR ERROR LOGS ────────────────────────────────────────────────────────────────
+const fs = require('fs'); // ya lo tenés arriba
+const authDir = '/app/.wwebjs_auth';
+if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
 // ─── INICIO ───────────────────────────────────────────────────────────────────
 async function main() {
   // Conectar a MongoDB

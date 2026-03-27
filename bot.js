@@ -311,7 +311,7 @@ async function necesitaBuscar(userMessage) {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
-        max_tokens: 30,
+        max_tokens: 140,
         temperature: 0.0,
         messages: [
           {

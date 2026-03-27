@@ -404,7 +404,6 @@ const lastReply = {};
 
 
 // ─── CORREGIR ERROR LOGS ────────────────────────────────────────────────────────────────
-const fs = require('fs'); // ya lo tenés arriba
 const authDir = '/app/.wwebjs_auth';
 if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
 // ─── INICIO ───────────────────────────────────────────────────────────────────

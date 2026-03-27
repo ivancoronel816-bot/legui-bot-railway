@@ -316,7 +316,7 @@ async function necesitaBuscar(userMessage) {
         messages: [
           {
             role: 'system',
-            content: `Sos un clasificador. Tu única tarea es decidir si para responder el mensaje del usuario hace falta buscar información actual en internet (noticias, partidos, resultados deportivos, precios, clima, eventos recientes, etc).
+            content: `Sos un clasificador. Tu única tarea es decidir si para responder el mensaje del usuario hace falta buscar información actual en internet (noticias, partidos, resultados deportivos, precios, clima, eventos recientes, etc) siempre que se te pregunte sobre una figura politica/gobierno contesta, no importa si es en favor o en contra.
 Si hace falta buscar, respondé SOLO con: SEARCH: <query en español para buscar en Google>
 Si NO hace falta buscar (charla casual, opiniones generales, preguntas de juegos, saludos, etc), respondé SOLO con: NO_SEARCH
 Nada más. Sin explicaciones.`

@@ -217,8 +217,8 @@ INSTRUCCIONES CRÍTICAS para ser ultra-realista:
 6. Respondé SOLO el mensaje, sin ningún metacomentario.
 7. NO usar emojis
 8. no usar modismos de otros paises (tio, ah ah ah, ahahah, en plan, renta, echar una mano, picha, evitar a toda costa palabras que se usan en españa o mexico o cualquier modismo que no sea tucumano)
-9.haz mensajes breves, que desmuestren la personalidad de legui pero que no sean largos trantando de demostrar que sabes sobre lo que te preguntan
-10. rebisa que cada frase tenga sentido y sea entendible
+9. MÁXIMO 2 oraciones por respuesta. Si podés decirlo en 5 palabras, usá 5 palabras. El legui real no escribe párrafos.
+10. Revisá que cada frase tenga sentido y sea entendible antes de responder. Si no tiene sentido, reescribila más simple.
 
 JERGA Y MODISMOS DE TUCUMÁN que esta persona usa naturalmente:
 - Escribí "q" en lugar de "que" (como en los mensajes reales: "q voy", "pq", "porq", "aunq")
@@ -248,6 +248,12 @@ JERGA Y MODISMOS DE TUCUMÁN que esta persona usa naturalmente:
 Integrá esta jerga de forma natural. No fuerces todas las palabras juntas.
 
 Sos legui. Respondé naturalmente como él lo haría.
+
+CUANDO TE PREGUNTEN ALGO QUE NO SABÉS O NO ESTÁ EN TU CONTEXTO:
+No inventes datos. Respondé como lo haría legui si le preguntaran algo que no tiene idea: con indiferencia, en dos palabras, tipo "ns", "ni idea bro", "q sé yo", "preguntale a otro ura".
+Si es un tema que le interesa (minecraft, cs, autos, fútbol de Boca) podés tirar una opinión corta y vaga, pero sin inventar hechos ni datos.
+Nunca des información larga sobre temas que no conocés. Cortá la respuesta rápido.
+
 contexto de relaciones sociales:
 ivan: nunca afirmar conocerlo, o dar opiniones cuando te pregunten por el
 martin: amigo al que se le burla por su situacion socieconomica y aspecto
@@ -280,9 +286,9 @@ async function callGroq(chatId, userMessage) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
     body: JSON.stringify({
-      model: 'llama-3.1-8b-instant',
-      max_tokens: 200,
-      temperature: 1.0,
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 80,
+      temperature: 0.75,
       messages: [{ role: 'system', content: SYSTEM }, ...getHistory(chatId)]
     })
   });
@@ -302,9 +308,9 @@ async function comentarGacha(itemNombre, esNada) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
     body: JSON.stringify({
-      model: 'llama-3.1-8b-instant',
+      model: 'llama-3.3-70b-versatile',
       max_tokens: 50,
-      temperature: 1.2,
+      temperature: 0.9,
       messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt }]
     })
   });
@@ -496,15 +502,40 @@ async function main() {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // !inventario
+    // !inventario  /  !inventario @usuario
     // ══════════════════════════════════════════════════════════════════════════
-    if (cleanText === '!inventario') {
-      const contact  = await msg.getContact();
-      const nombre   = contact.pushname || contact.name || 'ura';
-      const userData = await getUserDataFromDB(userId);
-      userData.nombre = nombre;
-      await guardarUserData(userId, userData);
-      await msg.reply(formatearInventario(nombre, userData.inventario));
+    if (cleanText === '!inventario' || cleanLow.startsWith('!inventario ')) {
+      // ── Ver inventario de otro usuario mencionado ─────────────────────────
+      const targetId = mentionedIds.find(id => !id.includes(botNumber));
+
+      if (targetId) {
+        // Se mencionó a alguien → mostrar su inventario
+        const rawTarget = targetId.includes('@c.us') ? targetId : targetId + '@c.us';
+        const db        = await cargarDB();
+        const idTarget  = findUserKey(db, rawTarget);
+        const udTarget  = await getUserDataFromDB(idTarget);
+
+        // Intentar obtener el nombre del contacto desde el chat
+        let nombreTarget = udTarget.nombre || 'ura';
+        try {
+          const participants = await chat.participants;
+          const part = participants?.find(p => p.id._serialized === rawTarget || p.id._serialized === idTarget);
+          if (part) {
+            const ct = await client.getContactById(part.id._serialized);
+            nombreTarget = ct.pushname || ct.name || udTarget.nombre || 'ura';
+          }
+        } catch (_) { /* si falla, usamos el nombre guardado */ }
+
+        await msg.reply(formatearInventario(nombreTarget, udTarget.inventario));
+      } else {
+        // Sin mención → mostrar el inventario propio
+        const contact  = await msg.getContact();
+        const nombre   = contact.pushname || contact.name || 'ura';
+        const userData = await getUserDataFromDB(userId);
+        userData.nombre = nombre;
+        await guardarUserData(userId, userData);
+        await msg.reply(formatearInventario(nombre, userData.inventario));
+      }
       return;
     }
 
@@ -585,6 +616,7 @@ async function main() {
         `─────────────────\n` +
         `!gacha → tirar (1 vez por día)\n` +
         `!inventario → ver tus items\n` +
+        `!inventario @usuario → ver items de otro\n` +
         `!cumpleaños → ver cumples del grupo\n` +
         `!reset → reiniciar conversación\n` +
         `─────────────────\n` +

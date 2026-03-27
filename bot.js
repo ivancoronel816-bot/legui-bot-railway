@@ -217,7 +217,7 @@ INSTRUCCIONES CRÍTICAS para ser ultra-realista:
 6. Respondé SOLO el mensaje, sin ningún metacomentario.
 7. NO usar emojis
 8. no usar modismos de otros paises (tio, ah ah ah, ahahah, en plan, renta, echar una mano, picha, evitar a toda costa palabras que se usan en españa o mexico o cualquier modismo que no sea tucumano)
-9. Respondé con al menos una oración completa, pero no más de 2. Nunca respondas con una sola palabra a menos que sea algo tipo "ns" o "dale". El legui real manda mensajes cortos pero que se entienden y dicen algo
+9. Respondé con al menos una oración completa, pero no más de 2. Nunca respondas con una sola palabra a menos que sea algo tipo "ns" o "dale". El legui real manda mensajes cortos pero que se entienden y dicen algo.
 10. Revisá que cada frase tenga sentido y sea entendible antes de responder. Si no tiene sentido, reescribila más simple.
 
 JERGA Y MODISMOS DE TUCUMÁN que esta persona usa naturalmente:
@@ -279,9 +279,89 @@ function addToHistory(chatId, role, content) {
   if (h.length > 20) h.splice(0, h.length - 20);
 }
 
+// ─── SERPER: BÚSQUEDA WEB ─────────────────────────────────────────────────────
+async function buscarEnWeb(query) {
+  try {
+    const res = await fetch('https://google.serper.dev/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-KEY': process.env.SERPER_API_KEY
+      },
+      body: JSON.stringify({ q: query, num: 3, hl: 'es', gl: 'ar' })
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const snippets = (data.organic || [])
+      .slice(0, 3)
+      .map(r => `- ${r.title}: ${r.snippet}`)
+      .join('\n');
+    return snippets || null;
+  } catch (e) {
+    console.error('buscarEnWeb:', e.message);
+    return null;
+  }
+}
+
+// ─── GROQ: DECIDE SI BUSCAR EN WEB ───────────────────────────────────────────
+async function necesitaBuscar(userMessage) {
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        max_tokens: 30,
+        temperature: 0.0,
+        messages: [
+          {
+            role: 'system',
+            content: `Sos un clasificador. Tu única tarea es decidir si para responder el mensaje del usuario hace falta buscar información actual en internet (noticias, partidos, resultados deportivos, precios, clima, eventos recientes, etc).
+Si hace falta buscar, respondé SOLO con: SEARCH: <query en español para buscar en Google>
+Si NO hace falta buscar (charla casual, opiniones generales, preguntas de juegos, saludos, etc), respondé SOLO con: NO_SEARCH
+Nada más. Sin explicaciones.`
+          },
+          { role: 'user', content: userMessage }
+        ]
+      })
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content?.trim() || 'NO_SEARCH';
+    if (text.startsWith('SEARCH:')) return text.replace('SEARCH:', '').trim();
+    return null;
+  } catch (e) {
+    console.error('necesitaBuscar:', e.message);
+    return null;
+  }
+}
+
 // ─── GROQ: CONVERSACIÓN NORMAL ────────────────────────────────────────────────
 async function callGroq(chatId, userMessage) {
   addToHistory(chatId, 'user', userMessage);
+
+  // 1. Groq decide si necesita buscar info actual
+  const searchQuery = await necesitaBuscar(userMessage);
+  let contextWeb = null;
+
+  if (searchQuery) {
+    console.log(`[WEB SEARCH] "${searchQuery}"`);
+    contextWeb = await buscarEnWeb(searchQuery);
+    if (contextWeb) console.log(`[WEB RESULT] ${contextWeb.slice(0, 100)}...`);
+  }
+
+  // 2. Si hay contexto web, lo inyectamos en el mensaje sin tocar el historial
+  const historialSinUltimo = getHistory(chatId).slice(0, -1);
+  const mensajeConContexto = contextWeb
+    ? `[Información actual de internet:\n${contextWeb}]\n\nMensaje: ${userMessage}`
+    : userMessage;
+
+  const messages = [
+    { role: 'system', content: SYSTEM },
+    ...historialSinUltimo,
+    { role: 'user', content: mensajeConContexto }
+  ];
+
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
@@ -289,7 +369,7 @@ async function callGroq(chatId, userMessage) {
       model: 'llama-3.3-70b-versatile',
       max_tokens: 120,
       temperature: 0.75,
-      messages: [{ role: 'system', content: SYSTEM }, ...getHistory(chatId)]
+      messages
     })
   });
   if (!res.ok) throw new Error(`Groq ${res.status}`);

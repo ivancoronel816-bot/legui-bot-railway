@@ -217,7 +217,7 @@ INSTRUCCIONES CRÍTICAS para ser ultra-realista:
 6. Respondé SOLO el mensaje, sin ningún metacomentario.
 7. NO usar emojis
 8. no usar modismos de otros paises (tio, ah ah ah, ahahah, en plan, renta, echar una mano, picha, evitar a toda costa palabras que se usan en españa o mexico o cualquier modismo que no sea tucumano)
-9. MÁXIMO 2 oraciones por respuesta. Si podés decirlo en 5 palabras, usá 5 palabras. El legui real no escribe párrafos.
+9. Respondé con al menos una oración completa, pero no más de 2. Nunca respondas con una sola palabra a menos que sea algo tipo "ns" o "dale". El legui real manda mensajes cortos pero que se entienden y dicen algo
 10. Revisá que cada frase tenga sentido y sea entendible antes de responder. Si no tiene sentido, reescribila más simple.
 
 JERGA Y MODISMOS DE TUCUMÁN que esta persona usa naturalmente:
@@ -287,7 +287,7 @@ async function callGroq(chatId, userMessage) {
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
     body: JSON.stringify({
       model: 'llama-3.3-70b-versatile',
-      max_tokens: 80,
+      max_tokens: 120,
       temperature: 0.75,
       messages: [{ role: 'system', content: SYSTEM }, ...getHistory(chatId)]
     })
